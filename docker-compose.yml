@@ -56,6 +56,7 @@ services:
     command: |
       "
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-created --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic inventory-reserved --partitions 3 --replication-factor 1
       echo 'Topics created:'
       kafka-topics --bootstrap-server kafka:29092 --list
       "
@@ -72,6 +73,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+  
+  inventory-service:
+    build: ./services/inventory-service
+    container_name: inventory-service
+    ports:
+      - "8002:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+    depends_on:
       kafka-init:
         condition: service_completed_successfully
 
