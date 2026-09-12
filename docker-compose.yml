@@ -112,6 +112,24 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+
+  data-pipeline:
+    build: ./data-pipeline
+    container_name: data-pipeline
+    ports:
+      - "8004:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+      SINK_MODE: local
+      LOCAL_DATA_DIR: /data/lake
+    volumes:
+      - data-lake:/data/lake
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully   
+         
 volumes:
   postgres-data:
   kafka-data:
+  data-lake:
