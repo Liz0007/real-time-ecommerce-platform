@@ -128,7 +128,16 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully   
-         
+
+  load-generator:
+    build: ./load-generator
+    container_name: load-generator
+    profiles: ["load-gen"]
+    command: ["--url", "http://order-service:8000", "--rate", "1.0"]
+    depends_on:
+      order-service:
+        condition: service_healthy
+               
 volumes:
   postgres-data:
   kafka-data:
