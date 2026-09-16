@@ -7,8 +7,10 @@ import random
 from datetime import datetime, timezone
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from sqlalchemy import text
 
 from app.config import settings
+from app.db import async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +66,24 @@ async def _handle_message(msg, producer: AIOKafkaProducer) -> None:
     await asyncio.sleep(0.1)
     in_stock = random.random() >= settings.simulated_out_of_stock_rate
 
+    reserved_at = datetime.now(timezone.utc)
     result = {
         "order_id": order_id,
         "status": "inventory_reserved" if in_stock else "inventory_unavailable",
-        "reserved_at": datetime.now(timezone.utc).isoformat(),
+        "reserved_at": reserved_at.isoformat(),
     }
+
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                text("""
+                    INSERT INTO inventory_reservations (order_id, status, reserved_at)
+                    VALUES (:order_id, :status, :reserved_at)
+                    ON CONFLICT (order_id) DO UPDATE
+                    SET status = EXCLUDED.status, reserved_at = EXCLUDED.reserved_at
+                """),
+                {"order_id": order_id, "status": result["status"], "reserved_at": reserved_at},
+            )
 
     await producer.send_and_wait(
         settings.publish_topic,

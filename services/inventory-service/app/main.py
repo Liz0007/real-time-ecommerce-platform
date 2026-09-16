@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.consumer import run_consumer
+from app.routers.inventory import router as inventory_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Inventory Service", lifespan=lifespan)
-
+app.include_router(inventory_router)
 
 @app.get("/health")
 async def health_check():

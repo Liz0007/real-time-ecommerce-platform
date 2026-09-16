@@ -15,6 +15,6 @@ class Settings(BaseSettings):
 
     # Simulated stock check — replace with a real inventory DB lookup.
     simulated_out_of_stock_rate: float = 0.0  # 0.0-1.0
-
+    database_url: str = "postgresql+asyncpg://postgres:postgres@inventory-postgres:5432/inventory"
 
 settings = Settings()
