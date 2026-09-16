@@ -20,6 +20,24 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./services/order-service/migrations:/docker-entrypoint-initdb.d
 
+  payment-postgres:
+    image: postgres:16-alpine
+    container_name: payment-postgres
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - payment-postgres-data:/var/lib/postgresql/data
+      - ./services/payment-service/migrations:/docker-entrypoint-initdb.d
+
   kafka:
     image: confluentinc/cp-kafka:7.7.1
     container_name: kafka
@@ -137,8 +155,51 @@ services:
     depends_on:
       order-service:
         condition: service_healthy
-               
+
+  ai-agent-service:
+    build: ./services/ai-agent-service
+    ports:
+      - "8010:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
+      - LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+      - AGENT_DB_URL=${AGENT_DB_URL}
+    depends_on:
+      - order-service
+      - payment-service
+      - inventory-service
+      - agent-db
+    networks:
+      - default
+
+  agent-ui:
+      build: ./services/agent-ui
+      ports:
+        - "8501:8501"
+      environment:
+        - AGENT_SERVICE_URL=http://ai-agent-service:8000
+      depends_on:
+        - ai-agent-service
+      networks:
+        - default
+ 
+  agent-db:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=agent
+      - POSTGRES_PASSWORD=${AGENT_DB_PASSWORD:-agent}
+      - POSTGRES_DB=agent_knowledge
+    ports:
+      - "5433:5432"   # 5433 to avoid clashing with order-service's Postgres on 5432
+    volumes:
+      - agent-db-data:/var/lib/postgresql/data
+
 volumes:
   postgres-data:
+  payment-postgres-data:
   kafka-data:
   data-lake:
+  agent-db-data:

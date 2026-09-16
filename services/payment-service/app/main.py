@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.consumer import run_consumer
+from app.routers.payments import router as payments_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Payment Service", lifespan=lifespan)
-
+app.include_router(payments_router)
 
 @app.get("/health")
 async def health_check():
