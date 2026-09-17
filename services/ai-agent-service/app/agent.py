@@ -45,8 +45,3 @@ def run_agent(question: str, enabled_tools: list[str] | None = None) -> dict:
             tools_called.append(tc["name"])
  
     return {"answer": _extract_text(messages[-1].content), "tools_called": tools_called}
- 
- 
-def ask_agent(question: str, enabled_tools: list[str] | None = None) -> str:
-    """Thin wrapper used by the API — just the answer text."""
-    return run_agent(question, enabled_tools)["answer"]
