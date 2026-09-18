@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     kafka_security_protocol: str = "PLAINTEXT"
 
     consumer_group_id: str = "notification-service"
-    consume_topics: list[str] = ["payment-processed", "inventory-reserved"]
+    consume_topics: list[str] = ["order-confirmed", "order-cancelled"]
 
 
 settings = Settings()
