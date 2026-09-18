@@ -7,6 +7,7 @@ from app.config import settings
 from app.db import async_session_factory
 from app.routers.orders import router as orders_router
 from app.workers.outbox_publisher import run_outbox_publisher
+from app.workers.order_status_consumer import run_order_status_consumer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,12 +22,14 @@ async def lifespan(app: FastAPI):
     await producer.start()
 
     stop_event = asyncio.Event()
-    worker_task = asyncio.create_task(run_outbox_publisher(async_session_factory, producer, stop_event))
-
+    outbox_task = asyncio.create_task(run_outbox_publisher(async_session_factory, producer, stop_event))
+    status_task = asyncio.create_task(run_order_status_consumer(stop_event, producer))
+    
     yield
 
     stop_event.set()
-    await worker_task
+    await outbox_task
+    await status_task
     await producer.stop()
 
 
