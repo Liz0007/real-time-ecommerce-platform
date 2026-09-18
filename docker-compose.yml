@@ -2,7 +2,7 @@
 # move this up when you do the monorepo restructure)
 
 services:
-  postgres:
+  order-postgres:
     image: postgres:16-alpine
     container_name: order-postgres
     environment:
@@ -17,7 +17,7 @@ services:
       timeout: 5s
       retries: 5
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - order-postgres-data:/var/lib/postgresql/data
       - ./services/order-service/migrations:/docker-entrypoint-initdb.d
 
   payment-postgres:
@@ -94,6 +94,8 @@ services:
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-created --partitions 3 --replication-factor 1
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic payment-processed --partitions 3 --replication-factor 1
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic inventory-reserved --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-confirmed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-cancelled --partitions 3 --replication-factor 1
       echo 'Topics created:'
       kafka-topics --bootstrap-server kafka:29092 --list
       "
@@ -104,11 +106,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/orders
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_SECURITY_PROTOCOL: PLAINTEXT
     depends_on:
-      postgres:
+      order-postgres:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -220,7 +221,7 @@ services:
       - agent-db-data:/var/lib/postgresql/data
 
 volumes:
-  postgres-data:
+  order-postgres-data:
   payment-postgres-data:
   inventory-postgres-data:
   kafka-data:
