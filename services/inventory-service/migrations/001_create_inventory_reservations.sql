@@ -6,15 +6,12 @@ CREATE TABLE IF NOT EXISTS inventory_reservations (
     status        TEXT NOT NULL,
     reserved_at   TIMESTAMPTZ NOT NULL, -- When this reservation attempt was made. Always set.
     
-    -- Deadline after which an unconfirmed reservation should be released
+    -- Reservation deadline after which an unconfirmed reservation should be released
     -- back to available stock. Only set when status = 'inventory_reserved'
     -- (a failed reservation never held stock, so it has nothing to expire).
     expires_at    TIMESTAMPTZ, 
 
-    -- When the reservation was actually released back to stock after
-    -- expiring unconfirmed. NULL until a background job (not yet built)
-    -- processes expired reservations — never set directly by the consumer
-    -- that creates the reservation.
+    -- stock returned to inventory after expiring unconfirmed. NULL until a background job (not yet built)
     released_at   TIMESTAMPTZ
 );
 
