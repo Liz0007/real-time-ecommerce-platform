@@ -1,5 +1,5 @@
 # app/consumer.py
-
+import uuid
 import asyncio
 import json
 import logging
@@ -13,6 +13,8 @@ from app.config import settings
 from app.db import async_session_factory
 
 logger = logging.getLogger(__name__)
+
+FAILURE_REASONS = ["insufficient_funds", "card_declined", "provider_timeout"]
 
 
 async def run_consumer(stop_event: asyncio.Event) -> None:
@@ -71,10 +73,17 @@ async def _handle_message(msg, producer: AIOKafkaProducer) -> None:
     success = random.random() >= settings.simulated_failure_rate
 
     processed_at = datetime.now(timezone.utc)
+    payment_method = random.choice(["card", "paypal", "bank_transfer"])
+    provider_transaction_id = f"txn_{uuid.uuid4().hex[:16]}"
+    failure_reason = None if success else random.choice(FAILURE_REASONS)
+    
     result = {
         "order_id": order_id,
         "status": "payment_succeeded" if success else "payment_failed",
         "amount": order.get("total_amount"),
+        "payment_method": payment_method,
+        "provider_transaction_id": provider_transaction_id,
+        "failure_reason": failure_reason,
         "processed_at": processed_at.isoformat(),
     }
 
@@ -84,17 +93,22 @@ async def _handle_message(msg, producer: AIOKafkaProducer) -> None:
         async with session.begin():
             await session.execute(
                 text("""
-                    INSERT INTO payments (order_id, status, amount, processed_at)
-                    VALUES (:order_id, :status, :amount, :processed_at)
+                    INSERT INTO payments (order_id, status, amount, payment_method, provider_transaction_id, failure_reason, processed_at)
+                    VALUES (:order_id, :status, :amount, :payment_method, :provider_transaction_id, :failure_reason, :processed_at)
                     ON CONFLICT (order_id) DO UPDATE
                     SET status = EXCLUDED.status,
-                        amount = EXCLUDED.amount,
+                        payment_method = EXCLUDED.payment_method,
+                        provider_transaction_id = EXCLUDED.provider_transaction_id,
+                        failure_reason = EXCLUDED.failure_reason,
                         processed_at = EXCLUDED.processed_at
                 """),
                 {
                     "order_id": order_id,
                     "status": result["status"],
                     "amount": result["amount"],
+                    "payment_method": payment_method,
+                    "provider_transaction_id": provider_transaction_id,
+                    "failure_reason": failure_reason,
                     "processed_at": processed_at,
                 },
             )
