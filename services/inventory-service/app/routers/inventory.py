@@ -10,7 +10,7 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 @router.get("/{order_id}")
 async def get_reservation(order_id: UUID, session: AsyncSession = Depends(get_session)):
     result = await session.execute(
-        text("SELECT order_id, status, reserved_at FROM inventory_reservations WHERE order_id = :id"),
+        text("SELECT order_id, status, reserved_at, expires_at, released_at FROM inventory_reservations WHERE order_id = :id"),
         {"id": order_id},
     )
     row = result.mappings().first()

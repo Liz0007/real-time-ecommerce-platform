@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from sqlalchemy import text
@@ -67,22 +67,32 @@ async def _handle_message(msg, producer: AIOKafkaProducer) -> None:
     in_stock = random.random() >= settings.simulated_out_of_stock_rate
 
     reserved_at = datetime.now(timezone.utc)
+    expires_at = reserved_at + timedelta(minutes=15) if in_stock else None
+    
     result = {
         "order_id": order_id,
         "status": "inventory_reserved" if in_stock else "inventory_unavailable",
         "reserved_at": reserved_at.isoformat(),
+        "expires_at": expires_at.isoformat() if expires_at else None,
     }
 
     async with async_session_factory() as session:
         async with session.begin():
             await session.execute(
                 text("""
-                    INSERT INTO inventory_reservations (order_id, status, reserved_at)
-                    VALUES (:order_id, :status, :reserved_at)
+                    INSERT INTO inventory_reservations (order_id, status, reserved_at, expires_at)
+                    VALUES (:order_id, :status, :reserved_at, :expires_at)
                     ON CONFLICT (order_id) DO UPDATE
-                    SET status = EXCLUDED.status, reserved_at = EXCLUDED.reserved_at
+                    SET status = EXCLUDED.status,
+                        reserved_at = EXCLUDED.reserved_at,
+                        expires_at = EXCLUDED.expires_at
                 """),
-                {"order_id": order_id, "status": result["status"], "reserved_at": reserved_at},
+                {
+                   "order_id": order_id,
+                    "status": result["status"],
+                    "reserved_at": reserved_at,
+                    "expires_at": expires_at,
+                },
             )
 
     await producer.send_and_wait(
