@@ -22,7 +22,7 @@ class OrderStatus(BaseModel):
  
     id: str
     customer_id: str
-    status: str = Field(description="e.g. pending, paid, shipped, cancelled")
+    status: str = Field(description="e.g. pending, confirmed or cancelled")
     total_amount: float
     currency: str = "EUR"
 
@@ -55,7 +55,7 @@ def get_order_status(order_id: str) -> OrderStatus:
     try:
         return OrderStatus.model_validate(data).model_dump()
     except ValidationError as e:
-        return {"error": f"Could not reach upstream service: {e}"}
+        return {"error": f"order-service returned unexpected data: {e}"}
 
 @tool
 def get_payment_status(order_id: str) -> dict:
