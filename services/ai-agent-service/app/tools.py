@@ -75,8 +75,7 @@ def check_inventory(order_id: str) -> dict:
     )
 
 
-# search_knowledge_base gets added here once rag.py exists, e.g.:
-# from app.rag import search_knowledge_base
+from app.rag import search_knowledge_base
 
 # Registry: display name -> tool. This is what the UI's multi-select
 # dropdown populates itself from, and what the agent filters against.
@@ -84,5 +83,5 @@ TOOL_REGISTRY = {
     "order": get_order_status,
     "payment": get_payment_status,
     "inventory": check_inventory,
-    # "rag": search_knowledge_base,
+    "rag": search_knowledge_base,
 }

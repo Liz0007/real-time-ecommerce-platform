@@ -8,10 +8,11 @@ dependencies = [
     "langgraph",
     "langchain-anthropic",
     "langsmith",
-    "psycopg[binary]",
     "pgvector",
     "httpx",
     "pydantic-settings",
+    "sentence-transformers>=3.0,<4.0",
+    "psycopg[binary]>=3.2,<4.0",
 ]
 
 [build-system]

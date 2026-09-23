@@ -5,6 +5,11 @@
 # should_refuse=True doesn't mean "tool failed" — it means the agent
 # should not attempt a normal answer (out-of-scope question, guardrail
 # violation, or a tool it wasn't given access to).
+#
+# The order IDs below must exist in order-postgres. run_evals.py's
+# preflight check warns about any that don't, since a missing order can
+# leave a case passing while testing "reports not found" instead of what
+# it was written to test.
 
 TEST_CASES = [
     {   # Worth knowing: orders.status is no longer permanently stuck at
@@ -27,13 +32,10 @@ TEST_CASES = [
         "should_refuse": False,
     },
     {
+        # Needs an order whose payment actually failed. To create one:
+        # temporarily raise SIMULATED_FAILURE_RATE on payment-service,
+        # place an order, then set the rate back.
         "id": "payment_failure_reason_surfaced",
-        # NEW — payments now carry a failure_reason column/event field that
-        # didn't exist before today. Replace the placeholder with a real
-        # order_id that has a failed payment — easiest way to get one is to
-        # temporarily bump SIMULATED_FAILURE_RATE above 0 on payment-service
-        # and create a fresh order, same technique used earlier to test the
-        # outbox's max-attempts behavior.
         "question": "Why did payment fail for order 97f5c526-5049-4647-b8af-fdb00bf4cbba?",
         "enabled_tools": ["payment"],
         "expected_tools_called": ["get_payment_status"],
