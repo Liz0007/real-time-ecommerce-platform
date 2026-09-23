@@ -1,28 +1,67 @@
 # Real-Time E-Commerce Data Platform
 
-A production-oriented event-driven e-commerce platform built with Python,
-FastAPI, PostgreSQL, Apache Kafka, and AWS — with an AI agent layer on top
-that answers questions about orders, payments, and inventory using the
-platform's own services as tools.
+An event-driven e-commerce backend: orders flow through Kafka to independent
+payment, inventory, and notification services, land in a data lake, and can be
+queried in plain language by an AI agent that reads live service data and
+internal documentation.
 
-## Project Goals
+Built with Python, FastAPI, PostgreSQL, Apache Kafka, Docker, LangGraph, and
+(in progress) Terraform on AWS.
 
-This project is being built to demonstrate:
+```bash
+git clone <this-repo> && cd real-time-ecommerce-platform
+cp services/order-service/.env.example services/order-service/.env
+cp services/ai-agent-service/.env.example services/ai-agent-service/.env  # add ANTHROPIC_API_KEY
+make up
+```
 
-- REST API development
-- PostgreSQL data modeling
-- Apache Kafka event streaming
-- Event-driven microservices
-- Transactional outbox pattern
-- Choreography sagas / eventual consistency across services
-- AI agent tool-use and function calling (LangGraph)
-- Retrieval-augmented generation (RAG) over internal docs
-- Idempotent consumers
-- Real-time data ingestion
-- AWS cloud infrastructure
-- Infrastructure as Code with Terraform
-- CI/CD
-- Monitoring and observability
+Everything runs locally in Docker — no AWS account or cloud costs needed.
+
+![The AI agent answering a question about a real order, calling the payment and inventory tools](docs/screenshots/agent-ui.png)
+
+## What it demonstrates
+
+- **Event-driven microservices** — six services communicating only through
+  Kafka events, never by reaching into each other's databases.
+- **Transactional outbox pattern** — guarantees an order and its event are
+  never out of sync, without distributed transactions.
+- **Choreography saga** — payment and inventory resolve independently and in
+  parallel; the order's final status is derived from both.
+- **Kafka in KRaft mode** — no Zookeeper, with explicitly provisioned topics.
+- **Stream ingestion to a data lake** — every event archived, partitioned by
+  topic and date, pluggable between local disk and S3.
+- **AI agent with tool use** — a LangGraph agent that answers questions by
+  calling the platform's own APIs, with per-request control over which tools
+  it may use.
+- **RAG over internal docs** — pgvector semantic search with a retrieval
+  threshold set from measurement, not guesswork.
+- **Testing and evaluation** — 28 automated tests plus an eval harness that
+  checks the agent's tool choices and guardrail behavior.
+
+## Verified behavior
+
+Claims worth checking rather than taking on faith:
+
+| What was tested | Result |
+|---|---|
+| Order/outbox atomicity under load (900+ orders via a synthetic traffic generator) | Exact 1:1 match, zero divergence |
+| End-to-end event delivery, reconciled by order ID across every Kafka topic | Zero missing orders |
+| Order status consolidation under continuous load | 114/114 orders reached a correct terminal state |
+| Automated tests (chunking, ingestion, search failure modes) | 28 passing in ~1.3s |
+| RAG retrieval quality (15 probe questions) | Relevant 0.25–0.64, irrelevant 0.89–0.99 — cleanly separable |
+
+Retrieval quality is measured rather than assumed. This probe run showed the
+initial threshold of `0.5` would have silently rejected five correct
+retrievals — including every bare-identifier lookup like `insufficient_funds`
+— and that a clean gap separated relevant from irrelevant results. The
+threshold was moved to `0.75` on that evidence:
+
+![Retrieval probe output: relevant questions score 0.246-0.643, irrelevant ones 0.887-0.994](docs/screenshots/rag-probe.png)
+
+```
+$ python -m pytest tests/ -v
+28 passed in 1.28s
+```
 
 ## Architecture
 
@@ -32,38 +71,37 @@ This project is being built to demonstrate:
                         ▼
                   ┌───────────┐
                   │  FastAPI  │
-                  │Order API  │
+                  │ Order API │
                   └─────┬─────┘
                         │
                         ▼
-                  ┌───────────┐
-                  │ PostgreSQL│
-                  │  Orders + │
-                  │ Fulfillment│
-                  │   State   │
-                  └─────┬─────┘
+                  ┌────────────┐
+                  │ PostgreSQL │
+                  │  Orders +  │
+                  │  Outbox    │
+                  └─────┬──────┘
                         │
                 Transactional Outbox
                         │
                         ▼
                 ┌───────────────┐
                 │     Kafka     │
-                │  AWS MSK      │
+                │  (AWS MSK)    │
                 └───────┬───────┘
                         │
-            ┌───────────┼────────────┐
-            ▼           ▼            │
-        Payment      Inventory       │
-        Service       Service        │
-            │           │            │
-            └─────┬─────┘            │
-                  ▼                  │
-          order-service syncs        │
-       orders.status, publishes      │
-      order-confirmed/-cancelled     │
-                  │                  │
-                  ▼                  │
-          Notification Service ◄─────┘
+            ┌───────────┼─────────────┐
+            ▼           ▼             │
+        Payment      Inventory        │
+        Service       Service         │
+            │           │             │
+            └─────┬─────┘             │
+                  ▼                   │
+        order-service consolidates    │
+        status, emits order-confirmed │
+        / order-cancelled             │
+                  │                   │
+                  ▼                   │
+          Notification Service ◄──────┘
                   │
                   ▼
            DATA PIPELINE
@@ -75,161 +113,134 @@ This project is being built to demonstrate:
                             ▼
                      BI / Reporting
 
-          ┌─────────────────────────┐
-          │   AI Agent Service      │
-          │  (LangGraph + Claude)   │◄── Streamlit UI (agent-ui)
-          │                         │
-          │  tools: order, payment, │
-          │  inventory, RAG         │
-          └───────────┬─────────────┘
-                       │  reads via HTTP
-                       ▼
-        order-service / payment-service / inventory-service
+          ┌──────────────────────────┐
+          │    AI Agent Service      │
+          │   (LangGraph + Claude)   │◄── Streamlit UI
+          │                          │
+          │ tools: order, payment,   │
+          │        inventory, RAG    │
+          └───────────┬──────────────┘
+                      │  HTTP (same APIs a human would call)
+                      ▼
+       order-service / payment-service / inventory-service
 ```
 
-The system will evolve from a local Docker-based environment into an
-AWS-based production architecture using ECS, RDS, MSK, S3, and Terraform.
+## Key design decisions
 
-### Key design decisions
-
-- **Transactional outbox, not dual writes** — `order-service` writes the
-  order and its event to Postgres in one transaction, then a background
-  worker polls the outbox table and publishes to Kafka. Avoids the
-  DB-write-succeeds-but-Kafka-publish-fails failure mode without
+- **Transactional outbox, not dual writes** — `order-service` writes the order
+  and its event to Postgres in one transaction; a background worker publishes
+  from the outbox table to Kafka. This removes the failure mode where the
+  database commit succeeds but the Kafka publish doesn't, without needing
   distributed transactions.
 - **Polling publisher over Debezium/CDC** — keeps the pipeline explainable
-  end-to-end without relying on Kafka Connect internals. Swapping in
-  Debezium later is a reasonable v2; the atomicity guarantee is the same
-  either way.
-- **Choreography saga, with fulfillment state kept separate from the order
-  entity** — `payment-service` and `inventory-service` each independently
-  react to `order-created`; neither knows about the other. `order-service`
-  consumes both of their results and tracks "have I heard from each"
-  in a dedicated `order_fulfillment_state` table — not as extra columns on
-  `orders` — so the order's own schema stays about the order, not about
-  coordination bookkeeping. Once both results are in, `order-service`
-  computes the order's real status and publishes a single consolidated
-  `order-confirmed`/`order-cancelled` event, rather than downstream
-  consumers having to piece together two separate raw events themselves.
-- **Local Kafka in KRaft mode** — no Zookeeper. Topics are created
-  explicitly by a one-shot `kafka-init` container rather than relying on
-  Kafka's auto-create, so topic ownership is visible and versioned.
-- **Database per service** — `order-service`, `payment-service`, and
-  `inventory-service` each have their own Postgres instance; no service
-  queries another's tables directly. Cross-service questions go through
-  Kafka events or (for the AI agent) each service's own HTTP API.
-- **AI agent has no direct DB access** — `ai-agent-service` answers
-  questions about specific orders only by calling the same HTTP APIs a
-  human could call, not by querying databases directly. This is what
-  makes the system prompt's "cite what you checked" requirement
-  enforceable rather than just a suggestion.
+  end-to-end without depending on Kafka Connect internals. The atomicity
+  guarantee is identical; only the publish mechanism differs.
+- **Fulfillment state kept out of the order entity** — payment and inventory
+  results are tracked in a separate `order_fulfillment_state` table rather
+  than as columns on `orders`, so coordination bookkeeping doesn't leak into
+  the order's own schema. `order-service` derives the final status from it and
+  emits one consolidated event, instead of leaving consumers to piece two raw
+  events together.
+- **At-least-once delivery, made explicit** — consumers commit offsets only
+  after a successful write, so a crash can reprocess but never drop. Writes are
+  idempotent (`ON CONFLICT`) to absorb the duplicates that implies.
+- **Database per service** — each service owns its own Postgres instance; no
+  service reads another's tables. Cross-service questions go through events, or
+  through each service's HTTP API.
+- **The AI agent has no database access** — it answers only by calling the same
+  APIs a human could call. That's what makes "cite what you checked" an
+  enforceable property rather than a prompt suggestion.
+- **Retrieval threshold set by measurement** — an initial guess of 0.5 would
+  have silently rejected five correct retrievals; probing the corpus showed a
+  clean gap and moved it to 0.75.
 
 ## Status
 
-🚧 Project under development
+🚧 Under active development.
 
 | Component | Status |
 |---|---|
-| `order-service` — orders API, transactional outbox → Kafka, fulfillment sync | ✅ Done, verified locally |
-| `payment-service` — payment processing, persisted results | ✅ Done, verified locally |
-| `inventory-service` — stock reservation, persisted results | ✅ Done, verified locally |
-| `notification-service` — consumes consolidated order-confirmed/-cancelled | ✅ Done, verified locally |
-| `data-pipeline` — Kafka → local/S3 data lake | ✅ Done, verified locally |
-| `load-generator` — continuous synthetic order traffic | ✅ Done |
-| `ai-agent-service` — LangGraph agent, order/payment/inventory tools, RAG | ✅ Done, verified locally |
-| `agent-ui` — Streamlit front-end for the agent | ✅ Done |
-| Analytics DB batch loader (lake → Postgres for BI) | ⬜ Not built — deferred |
-| Inventory reservation auto-expiry/release | ⬜ Not built — deferred (documented as a known gap) |
-| Terraform / AWS deployment | ⬜ Not started |
+| `order-service` — orders API, transactional outbox, status consolidation | ✅ Done, verified under load |
+| `payment-service` — payment processing, persisted results, query API | ✅ Done |
+| `inventory-service` — stock reservation, persisted results, query API | ✅ Done |
+| `notification-service` — consumes consolidated order events | ✅ Done |
+| `data-pipeline` — Kafka → local/S3 data lake | ✅ Done |
+| `load-generator` — synthetic order traffic for load testing | ✅ Done |
+| `ai-agent-service` — LangGraph agent, tool use, RAG, eval harness | ✅ Done |
+| `agent-ui` — Streamlit front-end | ✅ Done |
+| AI observability (LangSmith tracing) | ✅ Done |
+| Terraform / AWS deployment | 🚧 In progress — networking layer |
+| Analytics DB batch loader (lake → BI) | ⬜ Deferred |
+| Inventory reservation auto-expiry | ⬜ Deferred (documented gap) |
 | CI/CD | ⬜ Not started |
-| AI agent observability (LangSmith tracing) | ✅ Done |
 | Platform observability (metrics, dashboards, alerting) | ⬜ Not started |
-
-### Current Stage
-
-Full local event pipeline complete, including consolidated order-status
-tracking and the AI agent layer (tool-use + RAG) on top of it. Next:
-Terraform for AWS deployment.
 
 ## Repository layout
 
 ```
 real-time-ecommerce-platform/
-├── docker-compose.yml       # orchestrates Postgres (x3), Kafka (KRaft), topic init, all services
-├── Makefile                  # make up / down / logs / topics / test / load-analytics / load-gen
+├── docker-compose.yml        # Postgres ×4, Kafka (KRaft), topic init, all services
+├── Makefile                  # make up / down / logs / topics / load-gen
 ├── services/
-│   ├── order-service/        # orders API, transactional outbox, fulfillment-state sync
-│   ├── payment-service/      # Kafka consumer/producer, own Postgres
-│   ├── inventory-service/    # Kafka consumer/producer, own Postgres
-│   ├── notification-service/ # consumes order-confirmed/-cancelled
-│   ├── ai-agent-service/     # LangGraph agent, tools, RAG — see its own README
-│   └── agent-ui/             # Streamlit front-end for the agent
-├── data-pipeline/            # Kafka consumer → data lake, + analytics DB batch loader (loader deferred)
-├── load-generator/           # generates continuous fake order traffic for demos
-└── terraform/                # AWS deployment (not yet built)
+│   ├── order-service/        # orders API, outbox publisher, status consolidation
+│   ├── payment-service/      # Kafka consumer/producer + query API
+│   ├── inventory-service/    # Kafka consumer/producer + query API
+│   ├── notification-service/ # consumes order-confirmed / order-cancelled
+│   ├── ai-agent-service/     # LangGraph agent, tools, RAG  (see its README)
+│   └── agent-ui/             # Streamlit front-end
+├── data-pipeline/            # Kafka → data lake
+├── load-generator/           # synthetic order traffic
+└── terraform/                # AWS deployment (in progress)
 ```
 
 ## Kafka topics
 
-| Topic                | Produced by                          | Consumed by                                         |
-|-----------------------|-----------------------------------------|--------------------------------------------------------|
-| `order-created`        | order-service (via outbox)             | payment-service, inventory-service, data-pipeline      |
-| `payment-processed`    | payment-service                        | order-service, data-pipeline                           |
-| `inventory-reserved`   | inventory-service                      | order-service, data-pipeline                           |
-| `order-confirmed`      | order-service (on status transition)   | notification-service                                   |
-| `order-cancelled`      | order-service (on status transition)   | notification-service                                   |
+| Topic | Produced by | Consumed by |
+|---|---|---|
+| `order-created` | order-service (via outbox) | payment-service, inventory-service, data-pipeline |
+| `payment-processed` | payment-service | order-service, data-pipeline |
+| `inventory-reserved` | inventory-service | order-service, data-pipeline |
+| `order-confirmed` | order-service | notification-service |
+| `order-cancelled` | order-service | notification-service |
 
-## Running locally
+## Try it
 
-Requires Docker and Docker Compose.
-
-```bash
-git clone <this-repo>
-cd real-time-ecommerce-platform
-cp services/order-service/.env.example services/order-service/.env
-cp services/ai-agent-service/.env.example services/ai-agent-service/.env  # needs ANTHROPIC_API_KEY
-make up
-```
-
-- `order-service` → http://localhost:8000 (`/docs`, `/health`)
-- `payment-service` → http://localhost:8001
-- `inventory-service` → http://localhost:8002
-- `notification-service` → http://localhost:8003
-- `data-pipeline` → http://localhost:8004
-- `ai-agent-service` → http://localhost:8010 (`/docs`)
-- `agent-ui` (Streamlit) → http://localhost:8501
-- `make topics` — list Kafka topics
-- `make logs` — tail order-service logs
-- `make load-gen RATE=1` — generate continuous fake order traffic
-- `make down` / `make clean` — stop (optionally wiping volumes)
-
-Create an order and confirm the event reaches Kafka:
+After `make up`, create an order and watch it flow through every service:
 
 ```bash
 curl -X POST http://localhost:8000/orders \
   -H "Content-Type: application/json" \
   -d '{"customer_id": "11111111-1111-1111-1111-111111111111", "total_amount": "49.99"}'
 
-docker compose exec kafka kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic order-created \
-  --from-beginning
+docker compose logs -f order-service payment-service inventory-service notification-service
 ```
 
-Ask the agent about it once it's confirmed (via http://localhost:8501, or
-directly):
+Ask the AI agent about that order, at http://localhost:8501 or directly:
 
 ```bash
 curl -X POST http://localhost:8010/agent/ask \
   -H "Content-Type: application/json" \
-  -d '{"question": "What'\''s the status of order <the-order-id>?", "enabled_tools": ["order"]}'
+  -d '{"question": "What is the status of order <id>?", "enabled_tools": ["order"]}'
 ```
 
-## Running tests
+Generate continuous traffic, then check nothing was lost:
 
 ```bash
-make test
+make load-gen RATE=2
+docker compose exec order-postgres psql -U postgres -d orders \
+  -c "SELECT status, count(*) FROM orders GROUP BY status;"
 ```
 
-See [`services/ai-agent-service/README.md`](services/ai-agent-service/README.md)
-for that service's architecture, tools, RAG setup, and eval cases in detail.
+Service endpoints: order `:8000`, payment `:8001`, inventory `:8002`,
+notification `:8003`, data-pipeline `:8004`, agent `:8010`, UI `:8501`.
+
+## Tests
+
+```bash
+cd services/ai-agent-service
+python -m pytest tests/ -v          # 28 tests
+python -m evals.run_evals           # agent tool-choice + guardrail evals (needs the stack up)
+```
+
+Further detail on the agent, its tools, RAG setup, and known gaps:
+[`services/ai-agent-service/README.md`](services/ai-agent-service/README.md).
