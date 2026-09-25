@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_security_protocol: str = "PLAINTEXT"
-
+    aws_region: str = "eu-south-2"
     consumer_group_id: str = "data-pipeline"
     consume_topics: list[str] = [
         "order-created",

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_security_protocol: str = "PLAINTEXT"  # later: "SASL_SSL" for MSK
-
+    aws_region: str = "eu-south-2"
     # Outbox publisher worker
     outbox_poll_interval_seconds: float = 2.0
     outbox_batch_size: int = 50

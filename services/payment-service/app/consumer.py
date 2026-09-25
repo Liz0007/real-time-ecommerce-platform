@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.db import async_session_factory
+from app.kafka_auth import kafka_client_kwargs 
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,16 @@ async def run_consumer(stop_event: asyncio.Event) -> None:
     consumer = AIOKafkaConsumer(
         settings.consume_topic,
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        security_protocol=settings.kafka_security_protocol,
+        # security_protocol=settings.kafka_security_protocol,
         group_id=settings.consumer_group_id,
         enable_auto_commit=False,
         auto_offset_reset="earliest",
+        **kafka_client_kwargs(),
     )
     producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        security_protocol=settings.kafka_security_protocol,
+        # security_protocol=settings.kafka_security_protocol,
+        **kafka_client_kwargs(),
     )
 
     await consumer.start()

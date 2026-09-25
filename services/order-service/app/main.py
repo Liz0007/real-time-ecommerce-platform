@@ -8,6 +8,7 @@ from app.db import async_session_factory
 from app.routers.orders import router as orders_router
 from app.workers.outbox_publisher import run_outbox_publisher
 from app.workers.order_status_consumer import run_order_status_consumer
+from app.kafka_auth import kafka_client_kwargs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        security_protocol=settings.kafka_security_protocol,
+        # security_protocol=settings.kafka_security_protocol,
+        **kafka_client_kwargs(),
     )
     await producer.start()
 

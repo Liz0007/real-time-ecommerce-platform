@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.db import async_session_factory
+from app.kafka_auth import kafka_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,11 @@ async def run_order_status_consumer(stop_event: asyncio.Event, producer: AIOKafk
     consumer = AIOKafkaConsumer(
         *CONSUME_TOPICS,
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        security_protocol=settings.kafka_security_protocol,
+        # security_protocol=settings.kafka_security_protocol,
         group_id="order-service-status-updater",
         enable_auto_commit=False,
         auto_offset_reset="earliest",
+        **kafka_client_kwargs(),
     )
     await consumer.start()
     logger.info("order status consumer started, topics=%s", CONSUME_TOPICS)
