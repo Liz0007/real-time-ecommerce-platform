@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored,
+# since it tends to accumulate account-specific values.
+
+aws_region   = "eu-south-2"
+environment  = "demo"
+project_name = "ecommerce"
