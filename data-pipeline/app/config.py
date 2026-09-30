@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     consumer_group_id: str = "data-pipeline"
     consume_topics: list[str] = [
         "order-created",
-        #"order-cancelled",
+        "order-confirmed",
+        "order-cancelled",
         "payment-processed",
         "inventory-reserved",
     ]
