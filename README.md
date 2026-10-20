@@ -6,7 +6,8 @@ queried in plain language by an AI agent that reads live service data and
 internal documentation.
 
 Built with Python, FastAPI, PostgreSQL, Apache Kafka, Docker, LangGraph, and
-(in progress) Terraform on AWS.
+Terraform for AWS (written and validated; full deployment pending, see
+[Status](#status)).
 
 ```bash
 git clone <this-repo> && cd real-time-ecommerce-platform
@@ -35,8 +36,10 @@ Everything runs locally in Docker — no AWS account or cloud costs needed.
   it may use.
 - **RAG over internal docs** — pgvector semantic search with a retrieval
   threshold set from measurement, not guesswork.
-- **Testing and evaluation** — 28 automated tests plus an eval harness that
-  checks the agent's tool choices and guardrail behavior.
+- **Testing and evaluation** — 28 automated agent tests, a supervision test
+  suite in every Kafka-consuming service, an eval harness that checks the
+  agent's tool choices and guardrail behavior, and failure tests run against
+  the live stack.
 
 ## Verified behavior
 
@@ -49,6 +52,7 @@ Claims worth checking rather than taking on faith:
 | Order status consolidation under continuous load | 114/114 orders reached a correct terminal state |
 | Automated tests (chunking, ingestion, search failure modes) | 28 passing in ~1.3s |
 | RAG retrieval quality (15 probe questions) | Relevant 0.25–0.64, irrelevant 0.89–0.99 — cleanly separable |
+| A consumer's database disappears mid-batch (`payment-postgres` stopped while an order arrives) | Before the fix: the consumer died silently, the container stayed `healthy`, and the order sat in `pending`. After: a `CRITICAL` log naming the error, the container restarted itself, and the order was redelivered and `confirmed` once the database returned |
 
 Retrieval quality is measured rather than assumed. This probe run showed the
 initial threshold of `0.5` would have silently rejected five correct
@@ -86,7 +90,7 @@ $ python -m pytest tests/ -v
                         ▼
                 ┌───────────────┐
                 │     Kafka     │
-                │  (AWS MSK)    │
+                │ (KRaft / MSK) │
                 └───────┬───────┘
                         │
             ┌───────────┼─────────────┐
@@ -109,6 +113,7 @@ $ python -m pytest tests/ -v
          ┌────────┴────────┐
          ▼                 ▼
       S3 Data Lake     Analytics DB
+                       (deferred)
                             │
                             ▼
                      BI / Reporting
@@ -144,8 +149,15 @@ $ python -m pytest tests/ -v
 - **At-least-once delivery, made explicit** — consumers commit offsets only
   after a successful write, so a crash can reprocess but never drop. Writes are
   idempotent (`ON CONFLICT`) to absorb the duplicates that implies.
-- **Database per service** — each service owns its own Postgres instance; no
-  service reads another's tables. Cross-service questions go through events, or
+- **A dead consumer takes its service down with it** — each consumer runs as a
+  background task inside its FastAPI app. If it raises, the process exits, so
+  Docker or ECS restarts it and Kafka redelivers the uncommitted batch. Without
+  this, the API kept passing health checks while nothing was being consumed;
+  that was found by stopping a database mid-run, and the fix was verified the
+  same way.
+- **Database per service** — each service owns its own database (its own
+  Postgres container locally; its own database on one shared RDS instance on
+  AWS, to keep demo costs down); no service reads another's tables. Cross-service questions go through events, or
   through each service's HTTP API.
 - **The AI agent has no database access** — it answers only by calling the same
   APIs a human could call. That's what makes "cite what you checked" an
@@ -153,6 +165,29 @@ $ python -m pytest tests/ -v
 - **Retrieval threshold set by measurement** — an initial guess of 0.5 would
   have silently rejected five correct retrievals; probing the corpus showed a
   clean gap and moved it to 0.75.
+
+## How this differs in production
+
+This is a portfolio system, sized and simplified for demos. The table below is
+what would change before real traffic, and why each simplification is
+acceptable here.
+
+| Area | Here | In production | Why it is acceptable here |
+|---|---|---|---|
+| **Kafka durability** | 2 brokers, replication factor 2, `min.insync.replicas` 1 | 3+ brokers across 3 AZs, replication factor 3, `min.insync.replicas` 2 | MSK's minimum is 2 brokers; with RF 2 and min ISR 1 a write survives one broker but can be lost if the leader dies before replicating |
+| **Event contracts** | JSON payloads, parsed by each consumer | A schema registry (Avro or Protobuf) with compatibility rules enforced at publish time | Six services in one repo change together; a registry earns its keep once teams deploy independently |
+| **Outbox publishing** | A polling worker reads the outbox table | CDC (Debezium on MSK Connect) at high volume | Polling gives the same atomicity guarantee and stays explainable; CDC wins on latency and database load |
+| **Poison messages** | Unparseable JSON is logged and skipped; a failed write leaves the batch uncommitted, and the consumer that hit it exits the process so Docker or ECS restarts it and the batch is redelivered; the data pipeline keeps a failed flush in memory and retries it. No dead-letter topic | Dead-letter topics for unparseable and repeatedly failing messages, with an alert, so nothing is lost to a log line and one bad message cannot stall a partition | Every event here is produced by code in this repo, so malformed messages should not occur |
+| **Databases** | One `db.t3.micro`, single-AZ, four databases | One instance per service (at least for orders and payments), Multi-AZ, automated backups and point-in-time recovery, credential rotation | Keeps the database-per-service boundary at a quarter of the cost; the trade-offs are in `terraform/README.md` |
+| **Compute** | One task per service, no autoscaling | At least two tasks per service across AZs, autoscaling on CPU and Kafka consumer lag | A single task is enough to demonstrate the flow |
+| **Networking** | One NAT gateway | One NAT per AZ, plus VPC endpoints for ECR, S3 and Secrets Manager | A NAT outage only blocks outbound calls; endpoints cut NAT cost at real volume |
+| **Edge and access** | Internet-facing ALB, no user authentication on the APIs | HTTPS with an ACM certificate, authentication at the ALB (Cognito or OIDC), AWS WAF | Demo data only, and the stack exists for hours at a time |
+| **Terraform state** | Local state file | S3 backend with state locking, one state per environment, plan reviewed in a pull request | One person, one short-lived environment |
+| **Deploys** | Manual dispatch from GitHub Actions, rolling update | The same pipeline with automated tests gating it, plus staging before production and automatic rollback on failed health checks | Manual dispatch with an approval step is the safe default without a staging environment |
+| **Observability** | Container logs in CloudWatch; LangSmith tracing for the agent | Metrics and dashboards, distributed tracing across services, alerts on consumer lag, error rate and outbox backlog | Listed in Status as not started |
+| **Data lake** | Raw JSON partitioned by topic and date | Columnar, table-format storage (Parquet with Iceberg), compaction and a catalog | Built in the companion project [aws-native-data-platform](https://github.com/Liz0007/aws-native-data-platform), which turns this lake into bronze, silver and gold layers |
+| **AI agent** | Tool allow-list per request, eval harness run by hand | Evals in CI as a release gate, per-user rate limits and cost caps, monitoring of answer quality | One user, and the evals already check tool choice and guardrails |
+| **Inventory reservations** | Reservations never expire | A time-to-live that releases stock for orders that never complete | Documented gap, listed in Status |
 
 ## Status
 
@@ -169,7 +204,8 @@ $ python -m pytest tests/ -v
 | `ai-agent-service` — LangGraph agent, tool use, RAG, eval harness | ✅ Done |
 | `agent-ui` — Streamlit front-end | ✅ Done |
 | AI observability (LangSmith tracing) | ✅ Done |
-| Terraform / AWS deployment | 🚧 In progress — networking layer |
+| Terraform / AWS deployment | 🚧 Network, database, storage and secrets applied before; compute (ECS, MSK, ALB, ECR, GitHub OIDC) written and validated on branch [`deploy-ecs-msk`](https://github.com/Liz0007/real-time-ecommerce-platform/tree/deploy-ecs-msk), not yet deployed end to end: MSK is blocked by an account restriction pending with AWS Support |
+| Consumer supervision (a crashed consumer restarts its service) | ✅ Done, verified by stopping a database mid-run |
 | Analytics DB batch loader (lake → BI) | ⬜ Deferred |
 | Inventory reservation auto-expiry | ⬜ Deferred (documented gap) |
 | CI/CD | ⬜ Not started |
@@ -190,7 +226,7 @@ real-time-ecommerce-platform/
 │   └── agent-ui/             # Streamlit front-end
 ├── data-pipeline/            # Kafka → data lake
 ├── load-generator/           # synthetic order traffic
-└── terraform/                # AWS deployment (in progress)
+└── terraform/                # AWS: network, RDS, S3, secrets (compute on branch deploy-ecs-msk)
 ```
 
 ## Kafka topics
@@ -240,6 +276,15 @@ notification `:8003`, data-pipeline `:8004`, agent `:8010`, UI `:8501`.
 cd services/ai-agent-service
 python -m pytest tests/ -v          # 28 tests
 python -m evals.run_evals           # agent tool-choice + guardrail evals (needs the stack up)
+```
+
+Every Kafka-consuming service (order, payment, inventory, notification,
+data-pipeline) has `tests/test_supervision.py`: a crashing or early-exiting
+background task must exit the process, a normal shutdown must not.
+
+```bash
+cd services/order-service
+python -m pytest tests/test_supervision.py -v   # 4 tests
 ```
 
 Further detail on the agent, its tools, RAG setup, and known gaps:
