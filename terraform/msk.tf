@@ -1,8 +1,8 @@
 # MSK: provisioned, two brokers, IAM authentication.
 #
-# Provisioned rather than Serverless purely on cost: Serverless bills ~$0.75
+# Provisioned rather than Serverless purely on cost: Serverless bills ~$0.86
 # per cluster-hour regardless of load, while two kafka.t3.small brokers run
-# ~$0.09/hour. For a cluster that idles between demos, that is a large
+# ~$0.10/hour. For a cluster that idles between demos, that is a large
 # difference for no functional gain.
 #
 # Two brokers is the minimum MSK accepts, one per AZ.
