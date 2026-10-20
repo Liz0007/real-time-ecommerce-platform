@@ -56,3 +56,27 @@ variable "admin_ip_cidr" {
   type        = string
   default     = ""
 }
+
+variable "msk_instance_type" {
+  description = "MSK broker instance type. kafka.t3.small is the cheapest MSK supports."
+  type        = string
+  default     = "kafka.t3.small"
+}
+
+variable "msk_ebs_volume_size" {
+  description = "EBS storage per broker, in GB."
+  type        = number
+  default     = 20
+}
+
+variable "image_tag" {
+  description = "Container image tag deployed by ECS. CI overrides this with the commit SHA."
+  type        = string
+  default     = "latest"
+}
+
+variable "github_repo" {
+  description = "owner/repo, used to scope which repository may assume the deploy role."
+  type        = string
+  default     = "your-username/real-time-ecommerce-platform"
+}
