@@ -4,3 +4,5 @@
 aws_region   = "eu-south-2"
 environment  = "demo"
 project_name = "ecommerce"
+# GitHub repository allowed to deploy via OIDC (owner/name).
+github_repo = "your-github-user/real-time-ecommerce-platform"

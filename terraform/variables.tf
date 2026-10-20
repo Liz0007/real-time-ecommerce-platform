@@ -76,7 +76,12 @@ variable "image_tag" {
 }
 
 variable "github_repo" {
-  description = "owner/repo, used to scope which repository may assume the deploy role."
+  description = "GitHub repository allowed to deploy, as owner/name (e.g. octocat/my-repo)."
   type        = string
-  default     = "your-username/real-time-ecommerce-platform"
+  # No default: must be supplied, so a fork can never trust the wrong repo.
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", var.github_repo))
+    error_message = "github_repo must look like owner/name."
+  }
 }
