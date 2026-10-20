@@ -9,7 +9,7 @@ from app.routers.orders import router as orders_router
 from app.workers.outbox_publisher import run_outbox_publisher
 from app.workers.order_status_consumer import run_order_status_consumer
 from app.kafka_auth import kafka_client_kwargs
-
+from app.supervision import watch
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,9 @@ async def lifespan(app: FastAPI):
 
     stop_event = asyncio.Event()
     outbox_task = asyncio.create_task(run_outbox_publisher(async_session_factory, producer, stop_event))
+    watch(outbox_task, stop_event, "outbox publisher")
     status_task = asyncio.create_task(run_order_status_consumer(stop_event, producer))
-    
+    watch(status_task, stop_event, "order status consumer")
     yield
 
     stop_event.set()

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from app.consumer import run_consumer
 from app.routers.inventory import router as inventory_router
-
+from app.supervision import watch
 logging.basicConfig(level=logging.INFO)
 
 
@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     consumer_task = asyncio.create_task(run_consumer(stop_event))
-
+    watch(consumer_task, stop_event, "inventory consumer")
     yield
 
     stop_event.set()

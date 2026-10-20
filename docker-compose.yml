@@ -102,6 +102,7 @@ services:
 
   order-service:
     build: ./services/order-service
+    restart: on-failure
     container_name: order-service
     ports:
       - "8000:8000"
@@ -116,6 +117,7 @@ services:
   
   payment-service:
     build: ./services/payment-service
+    restart: on-failure
     container_name: payment-service
     ports:
       - "8001:8000"
@@ -130,6 +132,7 @@ services:
 
   inventory-service:
     build: ./services/inventory-service
+    restart: on-failure
     container_name: inventory-service
     ports:
       - "8002:8000"
@@ -144,6 +147,7 @@ services:
 
   notification-service:
     build: ./services/notification-service
+    restart: on-failure
     container_name: notification-service
     ports:
       - "8003:8000"
@@ -156,6 +160,7 @@ services:
 
   data-pipeline:
     build: ./data-pipeline
+    restart: on-failure
     container_name: data-pipeline
     ports:
       - "8004:8000"
