@@ -14,6 +14,7 @@ import asyncio
 import logging
 
 from aiokafka.abc import AbstractTokenProvider
+from aiokafka.helpers import create_ssl_context
 
 from app.config import settings
 
@@ -60,6 +61,8 @@ def kafka_client_kwargs() -> dict:
             "security_protocol": "SASL_SSL",
             "sasl_mechanism": "OAUTHBEARER",
             "sasl_oauth_token_provider": MSKTokenProvider(settings.aws_region),
+            # TLS to the brokers; MSK certificates chain to a public Amazon CA.
+            "ssl_context": create_ssl_context(),
         }
 
     logger.info("kafka auth: %s (no SASL)", protocol)

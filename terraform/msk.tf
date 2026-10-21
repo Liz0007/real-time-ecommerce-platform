@@ -35,7 +35,7 @@ resource "aws_security_group" "msk" {
 # count; min.insync.replicas 1 keeps writes available if one broker is down.
 resource "aws_msk_configuration" "main" {
   name              = "${local.name_prefix}-config"
-  kafka_versions    = ["3.7.x"]
+  kafka_versions    = ["3.9.x"]
   server_properties = <<-PROPERTIES
     auto.create.topics.enable=false
     default.replication.factor=2
@@ -51,7 +51,7 @@ resource "aws_cloudwatch_log_group" "msk" {
 
 resource "aws_msk_cluster" "main" {
   cluster_name           = "${local.name_prefix}-kafka"
-  kafka_version          = "3.7.x"
+  kafka_version          = "3.9.x"
   number_of_broker_nodes = length(var.availability_zones)
 
   broker_node_group_info {
