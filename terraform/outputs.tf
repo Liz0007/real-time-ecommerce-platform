@@ -37,3 +37,26 @@ output "anthropic_secret_name" {
 output "aws_region" {
   value = var.aws_region
 }
+
+output "alb_url" {
+  description = "Public entry point: agent-ui by default, order-service on /orders."
+  value       = "http://${aws_lb.main.dns_name}"
+}
+
+output "msk_bootstrap_brokers" {
+  description = "IAM-auth bootstrap string, injected into Kafka-using services."
+  value       = aws_msk_cluster.main.bootstrap_brokers_sasl_iam
+}
+
+output "ecr_repository_urls" {
+  value = { for k, v in aws_ecr_repository.services : k => v.repository_url }
+}
+
+output "ecs_cluster_name" {
+  value = aws_ecs_cluster.main.name
+}
+
+output "github_actions_role_arn" {
+  description = "Set as the AWS_ROLE_ARN variable in the GitHub repository."
+  value       = aws_iam_role.github_actions.arn
+}

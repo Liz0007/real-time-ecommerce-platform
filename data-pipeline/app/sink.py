@@ -9,7 +9,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 class Sink(Protocol):
-    async def write_batch(sefl, topic: str, records: list[dict]) -> None: ...
+    async def write_batch(self, topic: str, records: list[dict]) -> None: ...
     
 
 class LocalFileSink:
@@ -68,5 +68,5 @@ class S3Sink:
 
 def get_sink() -> Sink:
     if settings.sink_mode == "s3":
-        return S3Sink
+        return S3Sink()
     return LocalFileSink(settings.local_data_dir)

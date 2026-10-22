@@ -6,8 +6,8 @@ queried in plain language by an AI agent that reads live service data and
 internal documentation.
 
 Built with Python, FastAPI, PostgreSQL, Apache Kafka, Docker, LangGraph, and
-Terraform for AWS (written and validated; full deployment pending, see
-[Status](#status)).
+Terraform on AWS (deployed end to end and verified; see
+[`terraform/README.md`](terraform/README.md)).
 
 ```bash
 git clone <this-repo> && cd real-time-ecommerce-platform
@@ -16,7 +16,10 @@ cp services/ai-agent-service/.env.example services/ai-agent-service/.env  # add 
 make up
 ```
 
-Everything runs locally in Docker — no AWS account or cloud costs needed.
+Everything runs locally in Docker — no AWS account or cloud costs needed. The
+same images also run on AWS (ECS Fargate, MSK, RDS, S3, behind an
+Application Load Balancer); that deployment is created on demand for about
+$0.32 an hour and destroyed afterwards.
 
 ![The AI agent answering a question about a real order, calling the payment and inventory tools](docs/screenshots/agent-ui.png)
 
@@ -52,6 +55,7 @@ Claims worth checking rather than taking on faith:
 | Order status consolidation under continuous load | 114/114 orders reached a correct terminal state |
 | Automated tests (chunking, ingestion, search failure modes) | 28 passing in ~1.3s |
 | RAG retrieval quality (15 probe questions) | Relevant 0.25–0.64, irrelevant 0.89–0.99 — cleanly separable |
+| Full deployment on AWS: ECS Fargate, MSK with IAM auth, RDS, S3, ALB | An order placed through the load balancer was confirmed and archived to S3; the agent answered from live service data and from the RAG documents. The first deploy found four bugs that never show locally, all fixed or documented ([details](terraform/README.md#what-the-first-deploy-found)) |
 | A consumer's database disappears mid-batch (`payment-postgres` stopped while an order arrives) | Before the fix: the consumer died silently, the container stayed `healthy`, and the order sat in `pending`. After: a `CRITICAL` log naming the error, the container restarted itself, and the order was redelivered and `confirmed` once the database returned |
 
 Retrieval quality is measured rather than assumed. This probe run showed the
@@ -187,7 +191,7 @@ acceptable here.
 | **Observability** | Container logs in CloudWatch; LangSmith tracing for the agent | Metrics and dashboards, distributed tracing across services, alerts on consumer lag, error rate and outbox backlog | Listed in Status as not started |
 | **Data lake** | Raw JSON partitioned by topic and date | Columnar, table-format storage (Parquet with Iceberg), compaction and a catalog | Built in the companion project [aws-native-data-platform](https://github.com/Liz0007/aws-native-data-platform), which turns this lake into bronze, silver and gold layers |
 | **AI agent** | Tool allow-list per request, eval harness run by hand | Evals in CI as a release gate, per-user rate limits and cost caps, monitoring of answer quality | One user, and the evals already check tool choice and guardrails |
-| **Inventory reservations** | Reservations never expire | A time-to-live that releases stock for orders that never complete | Documented gap, listed in Status |
+| **Inventory reservations** | Reservations record an expiry time, but nothing releases them when it passes | A scheduled job (or a time-to-live) that releases stock for orders that never complete | Documented gap, listed in Status |
 
 ## Status
 
@@ -204,7 +208,7 @@ acceptable here.
 | `ai-agent-service` — LangGraph agent, tool use, RAG, eval harness | ✅ Done |
 | `agent-ui` — Streamlit front-end | ✅ Done |
 | AI observability (LangSmith tracing) | ✅ Done |
-| Terraform / AWS deployment | 🚧 Network, database, storage and secrets applied before; compute (ECS, MSK, ALB, ECR, GitHub OIDC) written and validated on branch [`deploy-ecs-msk`](https://github.com/Liz0007/real-time-ecommerce-platform/tree/deploy-ecs-msk), not yet deployed end to end: MSK is blocked by an account restriction pending with AWS Support |
+| Terraform / AWS deployment | ✅ Deployed end to end and verified (ECS, MSK, RDS, S3, ALB), then destroyed; recreated on demand. See [`terraform/README.md`](terraform/README.md) |
 | Consumer supervision (a crashed consumer restarts its service) | ✅ Done, verified by stopping a database mid-run |
 | Analytics DB batch loader (lake → BI) | ⬜ Deferred |
 | Inventory reservation auto-expiry | ⬜ Deferred (documented gap) |
@@ -226,7 +230,7 @@ real-time-ecommerce-platform/
 │   └── agent-ui/             # Streamlit front-end
 ├── data-pipeline/            # Kafka → data lake
 ├── load-generator/           # synthetic order traffic
-└── terraform/                # AWS: network, RDS, S3, secrets (compute on branch deploy-ecs-msk)
+└── terraform/                # AWS: VPC, MSK, ECS, RDS, S3, ALB, OIDC  (see its README)
 ```
 
 ## Kafka topics
@@ -286,6 +290,10 @@ background task must exit the process, a normal shutdown must not.
 cd services/order-service
 python -m pytest tests/test_supervision.py -v   # 4 tests
 ```
+
+`data-pipeline/tests/test_sink.py` covers the S3 sink, which local runs never
+exercise (they write to disk); it was added after the first AWS deploy found
+that path broken.
 
 Further detail on the agent, its tools, RAG setup, and known gaps:
 [`services/ai-agent-service/README.md`](services/ai-agent-service/README.md).

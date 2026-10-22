@@ -9,7 +9,7 @@
 # four instances is a variable change, not a redesign.
 
 resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnets"
+  name = "${local.name_prefix}-db-subnets"
   # Public subnets, because publicly_accessible only works where the subnet
   # routes to an internet gateway — in the private subnets the instance gets
   # a public IP that nothing can reach. This is what makes running migrations

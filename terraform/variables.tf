@@ -56,3 +56,32 @@ variable "admin_ip_cidr" {
   type        = string
   default     = ""
 }
+
+variable "msk_instance_type" {
+  description = "MSK broker instance type. kafka.t3.small is the cheapest MSK supports."
+  type        = string
+  default     = "kafka.t3.small"
+}
+
+variable "msk_ebs_volume_size" {
+  description = "EBS storage per broker, in GB."
+  type        = number
+  default     = 20
+}
+
+variable "image_tag" {
+  description = "Container image tag deployed by ECS. CI overrides this with the commit SHA."
+  type        = string
+  default     = "latest"
+}
+
+variable "github_repo" {
+  description = "GitHub repository allowed to deploy, as owner/name (e.g. octocat/my-repo)."
+  type        = string
+  # No default: must be supplied, so a fork can never trust the wrong repo.
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", var.github_repo))
+    error_message = "github_repo must look like owner/name."
+  }
+}
