@@ -48,7 +48,10 @@ resource "aws_secretsmanager_secret_version" "service_db_url" {
 
   secret_id = each.value.id
   secret_string = format(
-    "postgresql+asyncpg://%s:%s@%s:5432/%s",
+    "%s://%s:%s@%s:5432/%s",
+    # SQLAlchemy services need "postgresql+asyncpg"; the agent uses plain
+    # psycopg, which only accepts "postgresql". See db_url_scheme in locals.tf.
+    try(local.services[each.key].db_url_scheme, "postgresql+asyncpg"),
     var.db_username,
     random_password.db.result,
     aws_db_instance.main.address,

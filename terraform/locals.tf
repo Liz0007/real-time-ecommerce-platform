@@ -80,13 +80,14 @@ locals {
       port            = 8000
       # Larger than the others: the image carries torch and the embedding
       # model, and RAG queries run inference in-process.
-      cpu         = 512
-      memory      = 1024
-      db          = "agent_knowledge"
-      db_env_var  = "AGENT_DB_URL"
-      needs_kafka = false
-      needs_s3    = false
-      alb_paths   = []
+      cpu           = 512
+      memory        = 1024
+      db            = "agent_knowledge"
+      db_env_var    = "AGENT_DB_URL"
+      db_url_scheme = "postgresql" # psycopg, not SQLAlchemy: no "+asyncpg"
+      needs_kafka   = false
+      needs_s3      = false
+      alb_paths     = []
     }
     agent-ui = {
       needs_anthropic = false
