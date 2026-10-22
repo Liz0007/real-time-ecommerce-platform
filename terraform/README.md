@@ -1,11 +1,12 @@
 # Terraform: the AWS deployment
 
-> **Status: written and validated, not yet deployed end to end.**
-> The network, database, storage and secrets layers have been applied before.
-> Creating the MSK cluster failed with `SubscriptionRequiredException`, an
-> account-level restriction that AWS Support has to lift. Until a full deploy
-> has run, the steps below are the intended procedure, not a verified one.
-> This section will be updated with the evidence when it has.
+> **Status: deployed end to end and destroyed again (21 October 2026).**
+> All seven services ran on ECS against MSK, RDS and S3; an order placed
+> through the load balancer was paid, reserved, confirmed and archived to the
+> data lake, and the AI agent answered from live data and from the RAG
+> knowledge base. The first deploy found four bugs that never show locally;
+> they are listed under [What the first deploy found](#what-the-first-deploy-found).
+> The whole session, from empty account to verified stack, cost about $1.
 
 Everything here is billed by the hour while it exists. **The stack is meant to
 be created for a demo session and destroyed straight after.**
@@ -16,7 +17,7 @@ be created for a demo session and destroyed straight after.**
 |---|---|---|
 | Network | VPC across two AZs, public subnets (ALB only), private subnets (everything else), one NAT gateway | `vpc.tf`, `security_groups.tf` |
 | Data | RDS PostgreSQL 16 (`db.t3.micro`, single-AZ, 20 GB gp3) holding four databases; S3 data lake | `rds.tf`, `s3.tf` |
-| Streaming | MSK provisioned, Kafka 3.7, two `kafka.t3.small` brokers, IAM authentication | `msk.tf` |
+| Streaming | MSK provisioned, Kafka 3.9 (ZooKeeper mode), two `kafka.t3.small` brokers, IAM authentication | `msk.tf` |
 | Compute | ECS cluster on Fargate (ARM64), one service per microservice, Service Connect for internal DNS | `ecs.tf`, `locals.tf` |
 | Edge | Internet-facing Application Load Balancer, path-based routing | `alb.tf` |
 | Images | One ECR repository per service, with a lifecycle policy | `ecr.tf` |
@@ -62,6 +63,10 @@ destroyed between sessions.
 
 ## Before the first apply
 
+0. **Use a paid AWS plan.** Accounts on AWS's free plan cannot use MSK: every
+   MSK call, starting with `CreateConfiguration`, fails with
+   `SubscriptionRequiredException`. Upgrading the account lifts it. Set a
+   budget alert (Billing → Budgets) at the same time.
 1. **Enable eu-south-2.** Europe (Spain) is an opt-in region: enable it under
    *Account → AWS Regions* before applying, or every call fails.
 2. **Tools:** Terraform ≥ 1.9, the AWS CLI, Docker, `jq`, `psql`.
@@ -75,7 +80,8 @@ destroyed between sessions.
 
 ## Spin up
 
-Run everything from the repo root.
+Run everything from the repo root. Allow about an hour; MSK alone takes 20 to
+40 minutes to create.
 
 ```bash
 terraform -chdir=terraform init
@@ -92,31 +98,93 @@ Then, in this order:
    ```
    Images are built for `linux/arm64`, native on Apple Silicon.
 2. **Set the Anthropic key** outside Terraform, so it never lands in
-   Terraform state. Until it is set, the agent's task fails to launch, loudly:
+   Terraform state. `read -rs` keeps it off the screen and out of shell
+   history. Until it is set, the agent's task fails to launch, loudly:
    ```bash
+   read -rs ANTHROPIC_KEY; echo
    aws secretsmanager put-secret-value --region eu-south-2 \
      --secret-id "$(terraform -chdir=terraform output -raw anthropic_secret_name)" \
-     --secret-string 'sk-ant-...'
+     --secret-string "$ANTHROPIC_KEY"
+   unset ANTHROPIC_KEY
    ```
 3. **Create the databases and run the migrations.** RDS creates one database
    at launch and has no init-script hook; this is the replacement:
    ```bash
    ./terraform/scripts/bootstrap_databases.sh
    ```
-4. **Create the Kafka topics.** The brokers are private, so this runs as a
-   one-off ECS task inside the VPC (command in
-   `services/order-service/app/create_topics.py`).
+4. **Create the Kafka topics, then load the RAG documents.** The brokers and
+   the database are private, so both run as one-off ECS tasks inside the VPC:
+   ```bash
+   CLUSTER=$(terraform -chdir=terraform output -raw ecs_cluster_name)
+   SUBNETS=$(terraform -chdir=terraform output -json private_subnet_ids | jq -r 'join(",")')
+   SG=$(aws ec2 describe-security-groups --region eu-south-2 \
+     --filters Name=group-name,Values=ecommerce-demo-ecs-tasks-sg --query 'SecurityGroups[0].GroupId' --output text)
+   run_once() {  # $1 = service, $2 = command as a JSON array
+     local task
+     task=$(aws ecs run-task --region eu-south-2 --cluster "$CLUSTER" \
+       --task-definition "ecommerce-demo-$1" --launch-type FARGATE \
+       --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+       --overrides "{\"containerOverrides\":[{\"name\":\"$1\",\"command\":$2}]}" \
+       --query 'tasks[0].taskArn' --output text)
+     aws ecs wait tasks-stopped --region eu-south-2 --cluster "$CLUSTER" --tasks "$task"
+     aws ecs describe-tasks --region eu-south-2 --cluster "$CLUSTER" --tasks "$task" \
+       --query 'tasks[0].containers[0].exitCode'    # expect 0
+   }
+   run_once order-service    '["python","-m","app.create_topics"]'
+   run_once ai-agent-service '["python","-m","app.rag","ingest","./docs"]'
+   ```
 5. **Restart the services** so they pick up the images, secret and topics:
    ```bash
-   for s in $(aws ecs list-services --cluster "$(terraform -chdir=terraform output -raw ecs_cluster_name)" \
-                --region eu-south-2 --query 'serviceArns[]' --output text); do
-     aws ecs update-service --cluster "$(terraform -chdir=terraform output -raw ecs_cluster_name)" \
-       --service "$s" --force-new-deployment --region eu-south-2 >/dev/null
+   for s in $(aws ecs list-services --region eu-south-2 --cluster "$CLUSTER" --query 'serviceArns[]' --output text); do
+     aws ecs update-service --region eu-south-2 --cluster "$CLUSTER" --service "$s" --force-new-deployment >/dev/null
    done
    ```
-6. **Verify:** `terraform -chdir=terraform output -raw alb_url` should serve
-   the API, and an order placed through it should reach payment, inventory,
-   notification and the data lake.
+   After 3 to 5 minutes every service should show one running task.
+6. **Verify through the load balancer.** The ALB routes `/orders` to
+   order-service and everything else to the agent UI:
+   ```bash
+   ALB=$(terraform -chdir=terraform output -raw alb_url)
+   curl -s -X POST "$ALB/orders" -H "Content-Type: application/json" \
+     -d '{"customer_id": "11111111-1111-1111-1111-111111111111", "total_amount": "49.99"}'
+   curl -s "$ALB/orders/<id>"      # confirmed or cancelled within ~15 s
+   aws s3 ls "s3://$(terraform -chdir=terraform output -raw data_lake_bucket)/" --recursive
+   ```
+   Then open `$ALB` in a browser and ask the agent about the order, and
+   about a decline reason such as `insufficient_funds` (answered from the
+   RAG documents).
+
+## Verified on AWS
+
+| Check | Result |
+|---|---|
+| All services on ECS | 7 of 7 running, each authenticated to MSK through IAM (`Authenticated via OAUTHBEARER`) |
+| Order through the ALB | `confirmed`; payment, inventory and notification each logged it |
+| Data lake | One file per topic under `topic=<name>/date=<day>/` in S3 |
+| AI agent, live data | Answered the order's status, payment and reservation, using exactly the order, payment and inventory tools |
+| AI agent, RAG | Before ingestion: reported the knowledge base as unavailable and labelled its fallback as inferred. After: answered from `order_faq.md` using only the rag tool |
+
+![All seven ECS services running](../docs/screenshots/aws-ecs-services.png)
+![The agent answering from live data and from the RAG documents](../docs/screenshots/aws-agent-rag.png)
+![The S3 data lake, one folder per topic](../docs/screenshots/aws-s3-data-lake.png)
+![Payment-service logs: IAM authentication to MSK, then the order processed](../docs/screenshots/aws-payment-logs.png)
+
+## What the first deploy found
+
+Each of these passed every local test, because locally Kafka runs without TLS,
+the data lake writes to disk and every service's database URL comes from its
+own `.env`.
+
+| Problem | Symptom on AWS | Fix |
+|---|---|---|
+| The Kafka client was given no TLS context | Every producer and consumer failed at start-up: `ssl_context is mandatory` | `kafka_auth.py` passes `ssl_context=create_ssl_context()` for `SASL_SSL`; reproduced and verified locally without MSK |
+| `get_sink()` returned the `S3Sink` class instead of an instance | The data pipeline retried a failing flush every second and wrote nothing | `return S3Sink()`, plus `tests/test_sink.py`, which fails on the old code. No events were lost: offsets were never committed, so Kafka redelivered them to the fixed task |
+| Every database URL used the SQLAlchemy scheme `postgresql+asyncpg://` | The agent, which uses plain psycopg, could not connect to its database, so RAG was unavailable | A per-service `db_url_scheme` in `locals.tf` (`postgresql` for the agent). Fixed by hand in Secrets Manager during the session; the Terraform fix is validated but not yet exercised by a deploy |
+| The first RAG question loads the embedding model | The agent UI got `504 Gateway Timeout` from Service Connect's 15-second request limit; the second question was fast | Not fixed yet: load the model at start-up, and raise Service Connect's `per_request_timeout_seconds` for the agent |
+
+Two AWS constraints also changed the plan: MSK no longer offers Kafka 3.7 on
+standard brokers, and KRaft mode requires `m5`, `m7g` or Express brokers. The
+stack therefore runs Kafka 3.9 in ZooKeeper mode on `kafka.t3.small`, while
+the local Docker setup keeps KRaft. The services cannot tell the difference.
 
 ## Tear down
 
@@ -130,6 +198,11 @@ A count of 0 means Terraform is tracking nothing. Anything created by hand
 consoles if in doubt.
 
 ## Design decisions
+
+**Kafka 3.9 in ZooKeeper mode on `kafka.t3.small`.** KRaft on MSK needs
+`kafka.m5.large` or larger brokers, several times the price of two
+`kafka.t3.small` brokers. ZooKeeper mode is managed and invisible to the
+clients, so the cheaper brokers cost nothing in behaviour.
 
 **MSK provisioned, not Serverless.** In eu-south-2 MSK Serverless costs
 $0.8625 per cluster-hour plus $0.001725 per partition-hour (15 partitions:
